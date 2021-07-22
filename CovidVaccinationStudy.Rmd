@@ -1,0 +1,151 @@
+---
+title: "CovidVaccinationStudy"
+author: "Yohn Jairo Parra Bautista, PhD."
+date: "6/11/2021"
+output: html_document
+---
+
+```{r}
+library(tokenizers)
+library(tidyverse)
+library(tidytext)
+
+NCandFL <- read_csv("COVID19NorthCarolinaFlorida.csv")
+
+library(dplyr)
+text_df <- tibble(text = NCandFL$Description)
+text_df
+
+```
+
+```{r}
+#library(tokenizers)
+#tokenize_words(text_df$text)
+```
+
+```{r}
+#text_df %>%
+  #unnest_tokens(word, text, token = "words", strip_punct = FALSE)
+```
+
+```{r}
+tokenize_hyphenated_words <- function(x, lowercase = TRUE) {
+  if (lowercase)
+    x <- str_to_lower(x)
+
+  str_split(x, "[:space:]") %>%
+    map(~ str_remove_all(.x, "^[:punct:]+|[:punct:]+$"))
+}
+
+tokenize_hyphenated_words(text_df$text)
+```
+
+
+```{r}
+bench::mark(check = FALSE, iterations = 10,
+  `corpus` = corpus::text_tokens(text_df$text),
+  `tokenizers` = tokenizers::tokenize_words(text_df$text),
+  `text2vec` = text2vec::word_tokenizer(text_df$text),
+  `quanteda` = quanteda::tokenize_word(text_df$text),
+  `base R` = strsplit(text_df$text, "\\s")
+)
+```
+
+
+```{r}
+library(stopwords)
+
+tidy_text_df <- text_df %>%
+  unnest_tokens(word, text)
+```
+
+
+```{r}
+tidy_text_df %>%
+  filter(!(word %in% stopwords(source = "snowball")))
+```
+
+```{r}
+library(SnowballC)
+
+tidy_text_df %>%
+  mutate(stem = wordStem(word)) %>%
+  count(stem, sort = TRUE)
+```
+
+
+```{r}
+stemming <- tidy_text_df %>%
+  mutate(`Remove S` = str_remove(word, "s$"),
+         `Plural endings` = case_when(str_detect(word, "[^e|aies$]ies$") ~
+                                        str_replace(word, "ies$", "y"),
+                                      str_detect(word, "[^e|a|oes$]es$") ~
+                                        str_replace(word, "es$", "e"),
+                                      str_detect(word, "[^ss$|us$]s$") ~
+                                        str_remove(word, "s$"),
+                                      TRUE ~ word),
+         `Porter stemming` = wordStem(word)) %>%
+  rename(`Original word` = word)
+```
+
+```{r}
+stemming %>%
+  gather(Type, Result, `Remove S`:`Porter stemming`) %>%
+  mutate(Type = fct_inorder(Type)) %>%
+  count(Type, Result) %>%
+  group_by(Type) %>%
+  top_n(20, n) %>%
+  ungroup %>%
+  ggplot(aes(fct_reorder(Result, n),
+             n, fill = Type)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~Type, scales = "free_y") +
+  coord_flip() +
+  labs(x = NULL, y = "Frequency")
+```
+```{r}
+stemming %>%
+  filter(`Remove S` != `Plural endings`) %>%
+  distinct(`Remove S`, `Plural endings`, .keep_all = TRUE)
+```
+
+```{r}
+library(spacyr)
+text_df %>%
+  mutate(doc_id = paste0("doc", row_number())) %>%
+  select(doc_id, everything()) %>%
+  spacy_parse() %>%
+  anti_join(get_stopwords(), by = c("lemma" = "word")) %>%
+  count(lemma, sort = TRUE) %>%
+  top_n(20, n) %>%
+  ggplot(aes(n, fct_reorder(lemma, n))) +
+  geom_col() +
+  labs(x = "Frequency", y = NULL)
+```
+
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(SnowballC)
+
+NCandFL <- read_csv("COVID19NorthCarolinaFlorida.csv")
+
+NCandFL %>%
+  unnest_tokens(word, Description) %>%
+  anti_join(get_stopwords(), by = "word") %>%
+  mutate(stem = wordStem(word)) %>%
+  count(Id, stem) %>%
+  cast_dfm(Id, stem, n)
+```
+
+```{r}
+NCandFL %>%
+  unnest_tokens(word, Description) %>%
+  anti_join(get_stopwords(), by = "word") %>%
+  mutate(stem = wordStem(word)) %>%
+  count(Id, stem) %>%
+  bind_tf_idf(stem, Id, n) %>%
+  cast_dfm(Id, stem, tf_idf)
+```
+
